@@ -736,7 +736,7 @@ if ($PSCmdlet.ParameterSetName -like "*DDL*" ) {
         $spArgs.truncate = $($Truncate -eq $true)
     }
     if ($ReturnRows) {
-        dt = Invoke-SqlQuery -Reader -Query "EXEC $ProcedureName" -Parameters $spArgs @sqlArgs
+        $dt = Invoke-SqlQuery -Reader -Query "EXEC $ProcedureName" -Parameters $spArgs @sqlArgs
          # return as a CSV, to not use a CSV replace lines in block below with 'return $dt.Rows'
         $colNames = $dt.Columns.ColumnName
         ConvertTo-CSVLine $colNames

@@ -8,7 +8,7 @@
     
     Use the -CreateXXXXXDDL options to generate template code for configuring pre-requisites needed before actually sending the CSV data.
 .PARAMETER Upload
-    Run script in 'Upload CSV to a table' mode.
+    Run script in 'Upload CSV to a table' mode (default).
 .PARAMETER Process
     Run script in 'Upload CSV to a user-defined process' mode.
 .PARAMETER CreateUploadDDL
@@ -38,11 +38,11 @@
 .PARAMETER AuthorizedUser
     The user, role, or other security object that is allowed to EXEC the stored procedure and granted access to the TableType.
 .EXAMPLE
-    PS:\>SqlCsv.ps1 -Upload -CsvFile Xyz.csv -ProcedureName spUploadXyz -Server mySqlServer -Database dbProd
+    PS:\>SqlCsv.ps1 -CsvFile Xyz.csv -ProcedureName spUploadXyz -Server mySqlServer -Database dbProd
     Upload Xyz.csv to a table. The table will be created if it does not already exist. If there are existing records, the new CSV input will be appended.
     Requires pre-configuration setup using the -CreateUploadDDL switch. The DDL template produced during that process embeds the target table for the upload within the generated stored procedure.
 .EXAMPLE
-    PS:\>SqlCsv.ps1 -Upload -CsvFile Xyz.csv -ProcedureName spUploadXyz -Truncate -Server mySqlServer -Database dbProd
+    PS:\>SqlCsv.ps1 -CsvFile Xyz.csv -ProcedureName spUploadXyz -Truncate -Server mySqlServer -Database dbProd
     Upload Xyz.csv to a table named J1XyzTbl in the dbProd database. Existing table records are deleted before the upload.
     Requires pre-configuration setup using the -CreateUploadDDL switch. The DDL template produced during that process embeds the target table for the upload within the generated stored procedure.
 .EXAMPLE
@@ -62,9 +62,9 @@ using namespace System.Data
 using namespace System.Data.SqlClient
 using namespace System.Collections.Generic
 
-[CmdletBinding(DefaultParameterSetName='DDLUpload')]
+[CmdletBinding(DefaultParameterSetName='Upload')]
 param (
-    [Parameter(ParameterSetName='Upload', Mandatory)][switch]$Upload,
+    [Parameter(ParameterSetName='Upload')][switch]$Upload,
     [Parameter(ParameterSetName='Process', Mandatory)][switch]$Process,
     [Parameter(ParameterSetName='DDLUpload', Mandatory)][switch]$CreateUploadDDL,
     [Parameter(ParameterSetName='DDLProcess', Mandatory)][switch]$CreateProcessDDL,

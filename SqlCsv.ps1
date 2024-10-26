@@ -695,6 +695,26 @@ GRANT EXEC ON [$ProcedureName] TO [$AuthorizedUser]`r`n
     $ddl
 }
 
+function ConvertTo-CSVLine {
+    # generate a CSV line that doesn't have unnecessary quotes
+    param($ary)
+    $line = ''
+    foreach ($o in $ary) {
+        $s = $o.ToString(); $q = ''
+        if ($s.Contains('"')) {
+            $s = $s.Replace('"', '""')
+            $q = '"'
+        }
+        if ($s.Contains(',')) {
+            $q = '"'
+        }
+        $line += "$q$s$q,"
+    }
+    if ($line.Length -gt 0 -and $line[-1] -eq ',') {
+        $line.Substring(0, $line.Length - 1)
+    }
+}
+
 #############################################################################
 #  Script main process starts here
 #############################################################################
@@ -716,7 +736,13 @@ if ($PSCmdlet.ParameterSetName -like "*DDL*" ) {
         $spArgs.truncate = $($Truncate -eq $true)
     }
     if ($ReturnRows) {
-        Invoke-SqlQuery -Reader -Query "EXEC $ProcedureName" -Parameters $spArgs @sqlArgs
+        dt = Invoke-SqlQuery -Reader -Query "EXEC $ProcedureName" -Parameters $spArgs @sqlArgs
+         # return as a CSV, to not use a CSV replace lines in block below with 'return $dt.Rows'
+        $colNames = $dt.Columns.ColumnName
+        ConvertTo-CSVLine $colNames
+        foreach ($r in $dt.Rows) {
+            ConvertTo-CSVLine $r.ItemArray
+        }
     } else {
         Invoke-SqlQuery -NonQuery -Query "EXEC $ProcedureName" -Parameters $spArgs @sqlArgs
     }

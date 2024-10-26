@@ -696,7 +696,7 @@ GRANT EXEC ON [$ProcedureName] TO [$AuthorizedUser]`r`n
 }
 
 #############################################################################
-  Script main process starts here
+#  Script main process starts here
 #############################################################################
 iF (!$(Test-Path $CsvFile -PathType Leaf)) {
     "The CSV file does not exist: [" + $CsvFile + "]" | Out-Host

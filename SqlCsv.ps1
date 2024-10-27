@@ -188,7 +188,7 @@ function Open-SqlConnection {
     }
     if (!$Connection -or $Connection.State -ne 'Open') {
         if ($Credential) {
-            $Credential = "[User ID=$($Credential.UserId),Password='*pass*']"
+            $Credential = "[User ID=$($Credential.UserId),Password='******']"
         }
         $debug = @{
             ConnectionString = $ConnectionString
@@ -197,12 +197,10 @@ function Open-SqlConnection {
             Credential = $Credential
             IntegratedSecurity = $IntegratedSecurity
         }
-        Write-Host -ForegroundColor Red "Open-SqlConnection failed"
-        $debug
+        return $debug
     }
     return $Connection
 }
-
 
 function Invoke-SqlQuery {
     <#
@@ -361,8 +359,11 @@ function Invoke-SqlQuery {
             if ($Database) { $openArgs.Database = $Database }
             if ($Credential) { $openArgs.Credential = $Credential }
             if ($IntegratedSecurity) { $openArgs.IntegratedSecurity = $true }
-            $Connection = Open-SqlConnection @openArgs
-            if (!$Connection) {
+            $result = Open-SqlConnection @openArgs
+            if ($result.GetType() -eq [System.Data.SqlClient.SqlConnection]) {
+                $Connection = $result
+            } else {
+                $result
                 throw "Failed to open SQL connection"
             }
         }

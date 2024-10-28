@@ -26,7 +26,7 @@
 .PARAMETER ProcedureName
     The stored procedure that will process the uploaded CSV. When using the -CreateXXXXX switches, code will be generated in the setup SQL to create this stored procedure - it does not need to and should not already exist. In normal mode, after running the SQL setup DDL, this is the procedure that will process the uploaded CSV data.
 .PARAMETER TableName
-    The SQL table to send the data to. It does not have to exist as long as the user who created the stored procedure has permissions to create tables.
+    The SQL table to send the data to. When using -Upload, it must already exist unless the user running the script has Table CREATE rights. The template SQL produced when using the -CreateUploadDDL will handle the initial creation of the target table for you.
 .PARAMETER TableTypeName
     A name to assign to the table type when using the -CreateUploadDDL or -CreateProcessDDL switches. This does not actually create the TableType but defines a type with this name in the SQL generated to configure pre-requisites.
 .PARAMETER Create
@@ -101,7 +101,7 @@ param (
 function Get-DDL {
     $csv = Import-Csv $CsvFile
     $tbl = Convert-ListToDataTable $csv
-    $ddl = Get-TvpTypeDDL -TvpName $TableTypeName -Table $tbl -WithDrop -szVarchar 512 -szDecimal '10,2'
+    $ddl = Get-TvpTypeDDL -TvpName $TableTypeName -Table $tbl -szVarchar 512 -szDecimal '10,2'
     return $ddl
 }
 
@@ -541,11 +541,12 @@ function Convert-ListToDataTable {
             foreach ($itm in $InputObject) {
                 [System.Data.DataRow]$r = $tbl.NewRow()
                 $colNames | ForEach-Object { 
-                    if ($null -eq $itm.($_)) { 
+                    if ($null -eq $itm.($_) -or $itm.($_) -eq 'NULL') { 
                         $r[$_] = [DBNull]::Value 
                     } elseif ($tbl.Columns[$_].DataType.Name -eq 'String') {
-                        if ($_ -is [string]) { $r[$_] = $itm.($cNm.$_) }
-                         else { $r[$_] = ConvertTo-Json $itm.($_) -Depth 3 -Compress
+                        $val = $itm.($cNm.$_)
+                        if ($_ -is [string]) { $r[$_] = @($val, 'NULL')[$val -eq '`NULL'] }
+                         else { $r[$_] = ConvertTo-Json $val -Depth 3 -Compress
                         }
                     } else {
                         $r[$_] = $itm.($cNm.$_)
@@ -621,10 +622,35 @@ function Get-TvpTypeDDL {
 }
 
 function GenerateTemplateSQL {
+     # get schema and base name for the TableType, Table, and Procedure
+    if ($TableTypeName.Contains('.')) {
+        $ttSchema = $TableTypeName.Split('.')[0]
+        $ttName = $TableTypeName.Split('.')[1]
+    } else {
+        $ttSchema = 'dbo'
+        $ttName = $TableTypeName
+    }
+    $TableTypeName = "$ttSchema.$ttName"
+    if ($TableName.Contains('.')) {
+        $tblSchema = $TableName.Split('.')[0]
+        $tblName = $TableName.Split('.')[1]
+    } else {
+        $tblSchema = 'dbo'
+        $tblName = $TableName
+    }
+    $TableName = "$tblSchema.$tblName"
+    if ($ProcedureName.Contains('.')) {
+        $procName = $ProcedureName.Split('.')[0]
+        $procName = $ProcedureName.Split('.')[1]
+    } else {
+        $procSchema = 'dbo'
+        $procName = $ProcedureName
+    }
+    $ProcedureName = "$procSchema.$procName"
+     #
     $ddl = "`r`n-- Create TableType based on CSV file: $CsvFile`r`n"
     $ddl += "-- ** Adjust data types and sizes to something logical **`r`n"
-    $ddl += "-- DROPs are to clean up and start from scratch`r`n`r`n"
-    $ddl += "DROP PROCEDURE IF EXISTS $ProcedureName`r`n"
+    $ddl += "IF TYPE_ID('$TableTypeName') IS NULL`r`n"
     $ddl += Get-DDL 
     if ($null -eq $ddl -or $ddl -notlike "*CREATE TYPE*") {
         "Failed to create TableType DDL - check for valid CSV file" | Out-Host
@@ -635,25 +661,32 @@ function GenerateTemplateSQL {
 
 GO
 
+-- if the target table doesn't exist, create empty table based on type definition 
+IF OBJECT_ID('$TableName', 'U') IS NULL BEGIN
+  DECLARE @t AS [$ttSchema].[$ttName]
+  SELECT * INTO [$tblSchema].[$tblName] FROM @t WHERE 1 = 0
+END
+GO
+
 /****************************************************************************
 *  $ProcedureName - upload SP for $TableTypeName type CSV files
 *****************************************************************************/
-CREATE PROCEDURE [$ProcedureName] 
- @csv AS [$TableTypeName] READONLY, -- Input CSV data passed in the query
+CREATE OR ALTER PROCEDURE [$procSchema].[$procName] 
+ @csv AS [$ttSchema].[$ttName] READONLY, -- Input CSV data passed in the query
  @create AS VARCHAR(1),             -- Delete and recreate table (admin)
  @truncate AS VARCHAR(1)            -- Truncate without delete
 AS BEGIN
    -- zap table completely if 'create' option was set
-  IF @create = 1 DROP TABLE IF EXISTS [$TableName] 
+  IF @create = 1 DROP TABLE IF EXISTS [$tblSchema].[$tblName] 
    -- if the target table doesn't exist, create empty table based on type definition 
   IF OBJECT_ID('$TableName', 'U') IS NULL BEGIN
-    DECLARE @t AS [$TableTypeName]
-    SELECT * INTO [$TableName] FROM @t WHERE 1 = 0
+    DECLARE @t AS [$ttSchema].[$ttName]
+    SELECT * INTO [$tblSchema].[$tblName] FROM @t WHERE 1 = 0
   END
    -- zap table contents if truncate option was set
-  IF @create <> 1 AND @truncate = 1 DELETE FROM [$TableName] WHERE 1 = 1
+  IF @create <> 1 AND @truncate = 1 DELETE FROM [$tblSchema].[$tblName] WHERE 1 = 1
    -- load the CSV data into the specified table
-  INSERT INTO [$TableName]      -- a column list could be provided here
+  INSERT INTO [$tblSchema].[$tblName]      -- a column list could be provided here
     SELECT * FROM @csv          -- and specific columns to use from the csv here
 END
 GO
@@ -667,8 +700,8 @@ GO
 /****************************************************************************
 *  $ProcedureName - SP for processing $TableTypeName type CSV files
 *****************************************************************************/      
-CREATE PROCEDURE [$ProcedureName] 
- @csv AS [$TableTypeName] READONLY  -- Input CSV data passed in the query
+CREATE OR ALTER PROCEDURE [$procSchema].[$procName] 
+ @csv AS [$ttSchema].[$ttName] READONLY  -- Input CSV data passed in the query
 AS BEGIN
    -- The idea here is you JOIN and use @csv just like any other table
    -- SELECT, UPDATE, INSERT, DELETE, acres of SQL statements - whatever
@@ -689,9 +722,15 @@ GO
 -- CREATE LOGIN $AuthorizedUser WITH PASSWORD = 'SET_PWD_HERE';
 -- CREATE USER $AuthorizedUser FOR LOGIN $AuthorizedUser;
 
+-- Allow the user to see the table exists but not select from it
+GRANT VIEW DEFINITION ON OBJECT::[$tblSchema].[$tblName] TO [$AuthorizedUser]
+
+-- Allow the user to select from the uploaded table
+-- GRANT SELECT ON [$tblSchema].[$tblName] TO [$AuthorizedUser]
+
 -- Grant EXEC to the table type and stored procedure to the authorized user/role   
-GRANT EXEC ON TYPE::[$TableTypeName] TO [$AuthorizedUser]
-GRANT EXEC ON [$ProcedureName] TO [$AuthorizedUser]`r`n
+GRANT EXEC ON TYPE::[$ttSchema].[$ttName] TO [$AuthorizedUser]
+GRANT EXEC ON [$procSchema].[$procName] TO [$AuthorizedUser]`r`n
 "@   
     $ddl
 }

@@ -39,7 +39,7 @@
     The user, role, or other security object that is allowed to EXEC the stored procedure and granted access to the TableType.
 .EXAMPLE
     PS:\>SqlCsv.ps1 -CsvFile Xyz.csv -ProcedureName spUploadXyz -Server mySqlServer -Database dbProd
-    Upload Xyz.csv to a table. The table will be created if it does not already exist. If there are existing records, the new CSV input will be appended.
+    Upload Xyz.csv to a table. The table will be created if it does not already exist if ran by someone with TABLE create permissions. If there are existing records, the new CSV input will be appended.
     Requires pre-configuration setup using the -CreateUploadDDL switch. The DDL template produced during that process embeds the target table for the upload within the generated stored procedure.
 .EXAMPLE
     PS:\>SqlCsv.ps1 -CsvFile Xyz.csv -ProcedureName spUploadXyz -Truncate -Server mySqlServer -Database dbProd

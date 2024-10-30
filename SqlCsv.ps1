@@ -735,14 +735,19 @@ END
 GO`r`n
 "@
     }
-    $ddl += "IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = '$AuthorizedUser')`r`n"
+    $ddl += "DECLARE @typ VARCHAR(1)`r`n"
+    $ddl += "SELECT @typ = type FROM sys.database_principal WHERE name = '$AuthorizedUser'`r`n"
+    $ddl += "IF @typ IS NULL OR @typ <> 'R' BEGIN  -- if user account is not an existing database role`r`n"
+    $ddl += "  -- create server login and database user if needed`r`n"
+    $ddl += "  IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = '$AuthorizedUser')`r`n"
     if ($AuthorizedUser -like "*\*") {
-        $ddl += "  CREATE LOGIN [$AuthorizedUser] FROM WINDOWS`r`n"
+        $ddl += "    CREATE LOGIN [$AuthorizedUser] FROM WINDOWS`r`n"
     } else {
-        $ddl += "  CREATE LOGIN [$AuthorizedUser] WITH PASSWORD = '****SET_PWD_HERE****'`r`n"
+        $ddl += "    CREATE LOGIN [$AuthorizedUser] WITH PASSWORD = '****SET_PWD_HERE****'`r`n"
     }
-    $ddl += "IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = '$AuthorizedUser')`r`n"
-    $ddl += "  CREATE USER [$AuthorizedUser] FOR LOGIN [$AuthorizedUser]`r`n"
+    $ddl += "  IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = '$AuthorizedUser')`r`n"
+    $ddl += "    CREATE USER [$AuthorizedUser] FOR LOGIN [$AuthorizedUser]`r`n"
+    $ddl += "END`r`n"
     if ($ttSchema -ne 'dbo' -and $procSchema -ne 'dbo' -and $ttSchema -eq $procSchema) {
         $ddl += "GRANT EXECUTE ON SCHEMA::$ttSchema TO [$AuthorizedUser]`r`n"
     } else {

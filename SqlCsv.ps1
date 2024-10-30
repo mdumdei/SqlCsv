@@ -29,8 +29,6 @@
     The SQL table to send the data to. When using -Upload, it must already exist unless the user running the script has Table CREATE rights. The template SQL produced when using the -CreateUploadDDL will handle the initial creation of the target table for you.
 .PARAMETER TableTypeName
     A name to assign to the table type when using the -CreateUploadDDL or -CreateProcessDDL switches. This does not actually create the TableType but defines a type with this name in the SQL generated to configure pre-requisites.
-.PARAMETER Create
-    Applies when uploading a CSV to a database table. Delete and re-create the table before sending the data.
 .PARAMETER Truncate
     Applies when uploading a CSV to a database table. Truncate the table before sending the data.
 .PARAMETER ReturnRows
@@ -81,7 +79,6 @@ param (
     [Parameter(ParameterSetName='DDLUpload', Mandatory)]
     [Parameter(ParameterSetName='DDLProcess', Mandatory)][string]$TableTypeName,
     [Parameter(ParameterSetName='DDLUpload', Mandatory)][string]$TableName,
-    [Parameter(ParameterSetName='Upload')][switch]$Create,
     [Parameter(ParameterSetName='Upload')][switch]$Truncate,
     [Parameter(ParameterSetName='Process')][switch]$ReturnRows,
     # You may want to hard code $Server and $Database values, remove Mandatory if you do
@@ -631,37 +628,59 @@ function GenerateTemplateSQL {
         $ttName = $TableTypeName
     }
     $TableTypeName = "$ttSchema.$ttName"
-    if ($TableName.Contains('.')) {
-        $tblSchema = $TableName.Split('.')[0]
-        $tblName = $TableName.Split('.')[1]
-    } else {
-        $tblSchema = 'dbo'
-        $tblName = $TableName
-    }
-    $TableName = "$tblSchema.$tblName"
     if ($ProcedureName.Contains('.')) {
-        $procName = $ProcedureName.Split('.')[0]
+        $procSchema = $ProcedureName.Split('.')[0]
         $procName = $ProcedureName.Split('.')[1]
     } else {
         $procSchema = 'dbo'
         $procName = $ProcedureName
     }
     $ProcedureName = "$procSchema.$procName"
+    if ($null -ne $TableName) {
+        if ($TableName.Contains('.')) {
+            $tblSchema = $TableName.Split('.')[0]
+            $tblName = $TableName.Split('.')[1]
+        } else {
+            $tblSchema = 'dbo'
+            $tblName = $TableName
+        }
+        $TableName = "$tblSchema.$tblName"
+    }
      #
-    $ddl = "`r`n-- Create TableType based on CSV file: $CsvFile`r`n"
-    $ddl += "-- ** Adjust data types and sizes to something logical **`r`n"
+    $ddl = ""
+    if ($ttSchema -ne 'dbo' -or $procSchema -ne 'dbo' -or ($null -ne $TableName -and $tblSchema -ne 'dbo')) {
+        $ddl = "`r`n-- Create schema(s) if they don't exist`r`n"
+        if ($ttSchema -ne 'dbo') { 
+            $ddl += "IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = '$ttSchema')`r`n"
+            $ddl += "  EXEC('CREATE SCHEMA [$ttSchema]')`r`n"
+        }
+        if ($procSchema -ne 'dbo' -and $procSchema -ne $ttSchema) {
+            $ddl += "IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = '$procSchema')`r`n"
+            $ddl += "  EXEC('CREATE SCHEMA [$procSchema]')`r`n"
+        }
+        if ($null -ne $TableName) {
+            if ($tblSchema -ne 'dbo' -and $tblSchema -ne $ttSchema -and $tblSchema -ne $procSchema) {
+                $ddl += "IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = '$tblSchema')`r`n"
+                $ddl += "  EXEC('CREATE SCHEMA [$tblSchema]')`r`n"
+            }
+        }
+    }
+    $ddl += "`r`n-- Create TableType based on CSV file: $CsvFile`r`n"
+    $ddl += "/************************************************************`r`n"
+    $ddl += " *                                                          *`r`n"
+    $ddl += " *    Adjust data types and sizes to something logical!!    * `r`n"
+    $ddl += " *                                                          *`r`n"
+    $ddl += " ***********************************************************/`r`n"
     $ddl += "IF TYPE_ID('$TableTypeName') IS NULL`r`n"
     $ddl += Get-DDL 
+    $ddl += "`r`nGO`r`n"
     if ($null -eq $ddl -or $ddl -notlike "*CREATE TYPE*") {
         "Failed to create TableType DDL - check for valid CSV file" | Out-Host
         return
     }
     if ($CreateUploadDDL) {    # create Load table from CSV template
         $ddl += @"
-
-GO
-
--- if the target table doesn't exist, create empty table based on type definition 
+`r`n-- If the target table doesn't exist, create empty table based on type definition 
 IF OBJECT_ID('$TableName', 'U') IS NULL BEGIN
   DECLARE @t AS [$ttSchema].[$ttName]
   SELECT * INTO [$tblSchema].[$tblName] FROM @t WHERE 1 = 0
@@ -670,35 +689,38 @@ GO
 
 /****************************************************************************
 *  $ProcedureName - upload SP for $TableTypeName type CSV files
+*    - Destination table: $TableName
+*    - Truncate option will delete all rows before loading
+*    - If table doesn't exist, it will be created based on the TableType if
+*      the user has permissions to do so. If not the procedure fails.
 *****************************************************************************/
 CREATE OR ALTER PROCEDURE [$procSchema].[$procName] 
  @csv AS [$ttSchema].[$ttName] READONLY, -- Input CSV data passed in the query
- @create AS VARCHAR(1),             -- Delete and recreate table (admin)
- @truncate AS VARCHAR(1)            -- Truncate without delete
+ @truncate AS VARCHAR(1)            -- Truncate before loading
 AS BEGIN
-   -- zap table completely if 'create' option was set
-  IF @create = 1 DROP TABLE IF EXISTS [$tblSchema].[$tblName] 
-   -- if the target table doesn't exist, create empty table based on type definition 
-  IF OBJECT_ID('$TableName', 'U') IS NULL BEGIN
-    DECLARE @t AS [$ttSchema].[$ttName]
-    SELECT * INTO [$tblSchema].[$tblName] FROM @t WHERE 1 = 0
-  END
+  BEGIN TRY
+    IF OBJECT_ID('$TableName', 'U') IS NULL BEGIN
+        DECLARE @t AS [$ttSchema].[$ttName]
+        SELECT * INTO [$tblSchema].[$tblName] FROM @t WHERE 1 = 0
+    END
+  END TRY
+  BEGIN CATCH
+    PRINT 'User can''t see ''$TableName'' or create it.'
+    PRINT 'Not a problem if the table exists and end user just has no permissions.'
+  END CATCH
    -- zap table contents if truncate option was set
-  IF @create <> 1 AND @truncate = 1 DELETE FROM [$tblSchema].[$tblName] WHERE 1 = 1
+  IF @truncate = 1 DELETE FROM [$tblSchema].[$tblName] WHERE 1 = 1
    -- load the CSV data into the specified table
   INSERT INTO [$tblSchema].[$tblName]      -- a column list could be provided here
     SELECT * FROM @csv          -- and specific columns to use from the csv here
 END
-GO
-
+GO`r`n
 "@
     } elseif ($CreateProcessDDL) {
         $ddl += @"
-
-GO
-
 /****************************************************************************
 *  $ProcedureName - SP for processing $TableTypeName type CSV files
+*    - Put a description of what the procedure does here
 *****************************************************************************/      
 CREATE OR ALTER PROCEDURE [$procSchema].[$procName] 
  @csv AS [$ttSchema].[$ttName] READONLY  -- Input CSV data passed in the query
@@ -710,28 +732,24 @@ AS BEGIN
    JOIN j1Table j ON c.column = j.colunn
   WHERE c.column2 = 'Y'
 END
-GO
-
+GO`r`n
 "@
-   }
-   $ddl += @"
-
--- Optional - Create the user account to run the procedure
--- USE SET_DBNAME_HERE
--- GO
--- CREATE LOGIN $AuthorizedUser WITH PASSWORD = 'SET_PWD_HERE';
--- CREATE USER $AuthorizedUser FOR LOGIN $AuthorizedUser;
-
--- Allow the user to see the table exists but not select from it
-GRANT VIEW DEFINITION ON OBJECT::[$tblSchema].[$tblName] TO [$AuthorizedUser]
-
--- Allow the user to select from the uploaded table
--- GRANT SELECT ON [$tblSchema].[$tblName] TO [$AuthorizedUser]
-
--- Grant EXEC to the table type and stored procedure to the authorized user/role   
-GRANT EXEC ON TYPE::[$ttSchema].[$ttName] TO [$AuthorizedUser]
-GRANT EXEC ON [$procSchema].[$procName] TO [$AuthorizedUser]`r`n
-"@   
+    }
+    $ddl += "IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = '$AuthorizedUser')`r`n"
+    if ($AuthorizedUser -like "*\*") {
+        $ddl += "  CREATE LOGIN [$AuthorizedUser] FROM WINDOWS`r`n"
+    } else {
+        $ddl += "  CREATE LOGIN [$AuthorizedUser] WITH PASSWORD = '****SET_PWD_HERE****'`r`n"
+    }
+    $ddl += "IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = '$AuthorizedUser')`r`n"
+    $ddl += "  CREATE USER [$AuthorizedUser] FOR LOGIN [$AuthorizedUser]`r`n"
+    if ($ttSchema -ne 'dbo' -and $procSchema -ne 'dbo' -and $ttSchema -eq $procSchema) {
+        $ddl += "GRANT EXECUTE ON SCHEMA::$ttSchema TO [$AuthorizedUser]`r`n"
+    } else {
+        $ddl += "GRANT EXECUTE ON [$ttSchema].[$ttName] TO [$AuthorizedUser]`r`n"
+        $ddl += "GRANT EXECUTE ON [$procSchema].[$procName] TO [$AuthorizedUser]`r`n"
+    }
+    $ddl += "GO`r`n`r`n"
     $ddl
 }
 
@@ -772,7 +790,6 @@ if ($PSCmdlet.ParameterSetName -like "*DDL*" ) {
     $tbl = Convert-ListToDataTable $csv
     $spArgs = @{ 'csv' = $tbl;  }
     if ($Upload) {
-        $spArgs.create = $($Create -eq $true)
         $spArgs.truncate = $($Truncate -eq $true)
     }
     if ($ReturnRows) {

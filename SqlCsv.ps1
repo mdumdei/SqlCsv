@@ -735,6 +735,7 @@ END
 GO`r`n
 "@
     }
+    $ddl += "`r`n-- Assign EXEC permissions to the AuthorizedUser`r`n"
     $ddl += "DECLARE @typ VARCHAR(1)`r`n"
     $ddl += "SELECT @typ = type FROM sys.database_principals WHERE name = '$AuthorizedUser'`r`n"
     $ddl += "IF @typ IS NULL OR @typ <> 'R' BEGIN  -- if user account is not an existing database role`r`n"

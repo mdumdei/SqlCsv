@@ -29,8 +29,6 @@
     The SQL table to send the data to. When using -Upload, it must already exist unless the user running the script has Table CREATE rights. The template SQL produced when using the -CreateUploadDDL will handle the initial creation of the target table for you.
 .PARAMETER TableTypeName
     A name to assign to the table type when using the -CreateUploadDDL or -CreateProcessDDL switches. This does not actually create the TableType but defines a type with this name in the SQL generated to configure pre-requisites.
-.PARAMETER Create
-    Applies when uploading a CSV to a database table. Delete and re-create the table before sending the data.
 .PARAMETER Truncate
     Applies when uploading a CSV to a database table. Truncate the table before sending the data.
 .PARAMETER ReturnRows
@@ -38,22 +36,22 @@
 .PARAMETER AuthorizedUser
     The user, role, or other security object that is allowed to EXEC the stored procedure and granted access to the TableType.
 .EXAMPLE
-    PS:\>SqlCsv.ps1 -Upload -CsvFile Xyz.csv -ProcedureName spUploadXyz -Server mySqlServer -Database dbProd
+    PS:\>.\SqlCsv.ps1 -Upload -CsvFile Xyz.csv -ProcedureName spUploadXyz -Server mySqlServer -Database dbProd
     Upload Xyz.csv to a table. The table will be created if it does not already exist if ran by someone with TABLE create permissions. If there are existing records, the new CSV input will be appended.
     Requires pre-configuration setup using the -CreateUploadDDL switch. The DDL template produced during that process embeds the target table for the upload within the generated stored procedure.
 .EXAMPLE
-    PS:\>SqlCsv.ps1 -Upload -CsvFile Xyz.csv -ProcedureName spUploadXyz -Truncate -Server mySqlServer -Database dbProd
+    PS:\>.\SqlCsv.ps1 -Upload -CsvFile Xyz.csv -ProcedureName spUploadXyz -Truncate -Server mySqlServer -Database dbProd
     Upload Xyz.csv to a table named J1XyzTbl in the dbProd database. Existing table records are deleted before the upload.
     Requires pre-configuration setup using the -CreateUploadDDL switch. The DDL template produced during that process embeds the target table for the upload within the generated stored procedure.
 .EXAMPLE
-    PS:\>SqlCsv.ps1 -Process -CsvFile abc.csv -ProcedureName spCustomAbcProcess -Server mySqlServer -Database dbProd
+    PS:\>.\SqlCsv.ps1 -Process -CsvFile abc.csv -ProcedureName spCustomAbcProcess -Server mySqlServer -Database dbProd
     Upload abc.csv to a user defined stored procedure. The stored procedure can use the uploaded CSV in JOINs as though it were a native table or a table variable for any type of SQL operation: SELECT, INSERT, DELETE, UPDATE, ... 
     Requires pre-configuration setup using the -CreateProcessDDL switch.
 .EXAMPLE
-    PS:\>SqlCsv.ps1 -CreateUploadDDL -CsvFile xyz.csv -ProcedureName spUploadXyz -TableName myTable -TableTypeName ttXyzType -AuthorizedUser XyzUser 
+    PS:\>.\SqlCsv.ps1 -CreateUploadDDL -CsvFile xyz.csv -ProcedureName spUploadXyz -TableName myTable -TableTypeName ttXyzType -AuthorizedUser XyzUser 
     Create an SQL code snippet to configure uploading data files that match the column data in xyz.csv. The snippet will contain a definition for the TableType, a definition for the SQL procedure that loads the table, and grant necessary permissions for the end user.
 .EXAMPLE
-    PS:\>SqlCsv.ps1 -CreateProcessDDL -CsvFile abc.csv -ProcedureName spCustomAbcProcess -AuthorizedUser AbcUser -TableTypeName ttAbcType
+    PS:\>.\SqlCsv.ps1 -CreateProcessDDL -CsvFile abc.csv -ProcedureName spCustomAbcProcess -AuthorizedUser AbcUser -TableTypeName ttAbcType
     Create an SQL code snippet to configure uploading data files that match the column data in abc.csv. The snippet will contain a definition for the TableType, a shell definition for a custom stored procedure that will make use of the uploaded CSV, and grant necessary permissions for the end user.
 .NOTES
     Mike Dumdei, TC3
@@ -81,7 +79,6 @@ param (
     [Parameter(ParameterSetName='DDLUpload', Mandatory)]
     [Parameter(ParameterSetName='DDLProcess', Mandatory)][string]$TableTypeName,
     [Parameter(ParameterSetName='DDLUpload', Mandatory)][string]$TableName,
-    [Parameter(ParameterSetName='Upload')][switch]$Create,
     [Parameter(ParameterSetName='Upload')][switch]$Truncate,
     [Parameter(ParameterSetName='Process')][switch]$ReturnRows,
     # You may want to hard code $Server and $Database values, remove Mandatory if you do
@@ -649,8 +646,9 @@ function GenerateTemplateSQL {
     $ProcedureName = "$procSchema.$procName"
      #
     $ddl = "`r`n-- Create TableType based on CSV file: $CsvFile`r`n"
-    $ddl += "-- ** Adjust data types and sizes to something logical **`r`n"
     $ddl += "IF TYPE_ID('$TableTypeName') IS NULL`r`n"
+    $ddl += "  >>> Remove these lines after setting types below: <<<`r`n"
+    $ddl += "  >>> Adjust data types and sizes to logical values <<<`r`n"
     $ddl += Get-DDL 
     if ($null -eq $ddl -or $ddl -notlike "*CREATE TYPE*") {
         "Failed to create TableType DDL - check for valid CSV file" | Out-Host
@@ -673,18 +671,10 @@ GO
 *****************************************************************************/
 CREATE OR ALTER PROCEDURE [$procSchema].[$procName] 
  @csv AS [$ttSchema].[$ttName] READONLY, -- Input CSV data passed in the query
- @create AS VARCHAR(1),             -- Delete and recreate table (admin)
  @truncate AS VARCHAR(1)            -- Truncate without delete
 AS BEGIN
-   -- zap table completely if 'create' option was set
-  IF @create = 1 DROP TABLE IF EXISTS [$tblSchema].[$tblName] 
-   -- if the target table doesn't exist, create empty table based on type definition 
-  IF OBJECT_ID('$TableName', 'U') IS NULL BEGIN
-    DECLARE @t AS [$ttSchema].[$ttName]
-    SELECT * INTO [$tblSchema].[$tblName] FROM @t WHERE 1 = 0
-  END
    -- zap table contents if truncate option was set
-  IF @create <> 1 AND @truncate = 1 DELETE FROM [$tblSchema].[$tblName] WHERE 1 = 1
+  IF @truncate = 1 DELETE FROM [$tblSchema].[$tblName] WHERE 1 = 1
    -- load the CSV data into the specified table
   INSERT INTO [$tblSchema].[$tblName]      -- a column list could be provided here
     SELECT * FROM @csv          -- and specific columns to use from the csv here
@@ -766,7 +756,6 @@ if ($PSCmdlet.ParameterSetName -like "*DDL*" ) {
     $tbl = Convert-ListToDataTable $csv
     $spArgs = @{ 'csv' = $tbl;  }
     if ($Upload) {
-        $spArgs.create = $($Create -eq $true)
         $spArgs.truncate = $($Truncate -eq $true)
     }
     if ($ReturnRows) {

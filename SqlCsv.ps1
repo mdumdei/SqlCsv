@@ -37,12 +37,10 @@
     The user, role, or other security object that is allowed to EXEC the stored procedure and granted access to the TableType.
 .EXAMPLE
     PS:\>.\SqlCsv.ps1 -Upload -CsvFile Xyz.csv -ProcedureName spUploadXyz -Server mySqlServer -Database dbProd
-    Upload Xyz.csv to a table. The table will be created if it does not already exist if ran by someone with TABLE create permissions. If there are existing records, the new CSV input will be appended.
-    Requires pre-configuration setup using the -CreateUploadDDL switch. The DDL template produced during that process embeds the target table for the upload within the generated stored procedure.
+    Upload Xyz.csv to a table. If there are existing records, the new CSV input will be appended. Requires pre-configuration setup using the -CreateUploadDDL switch. The DDL template produced during that process embeds the target table for the upload within the generated stored procedure.
 .EXAMPLE
     PS:\>.\SqlCsv.ps1 -Upload -CsvFile Xyz.csv -ProcedureName spUploadXyz -Truncate -Server mySqlServer -Database dbProd
-    Upload Xyz.csv to a table named J1XyzTbl in the dbProd database. Existing table records are deleted before the upload.
-    Requires pre-configuration setup using the -CreateUploadDDL switch. The DDL template produced during that process embeds the target table for the upload within the generated stored procedure.
+    Upload Xyz.csv to a table named J1XyzTbl in the dbProd database. Existing table records are deleted before the upload. Requires pre-configuration setup using the -CreateUploadDDL switch. The DDL template produced during that process embeds the target table for the upload within the generated stored procedure.
 .EXAMPLE
     PS:\>.\SqlCsv.ps1 -Process -CsvFile abc.csv -ProcedureName spCustomAbcProcess -Server mySqlServer -Database dbProd
     Upload abc.csv to a user defined stored procedure. The stored procedure can use the uploaded CSV in JOINs as though it were a native table or a table variable for any type of SQL operation: SELECT, INSERT, DELETE, UPDATE, ... 
@@ -770,3 +768,4 @@ if ($PSCmdlet.ParameterSetName -like "*DDL*" ) {
         Invoke-SqlQuery -NonQuery -Query "EXEC $ProcedureName" -Parameters $spArgs @sqlArgs
     }
 }
+
